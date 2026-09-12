@@ -4,6 +4,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Type } from '@google/genai';
+import { blockchainService } from './server/services/blockchain/blockchainService';
 
 dotenv.config();
 
@@ -93,6 +94,7 @@ interface GrievanceItem {
   timeline?: any[];
   officialReplies?: any[];
   isUnseen?: boolean;
+  blockchainAudit?: any;
 }
 
 let grievancesDb: GrievanceItem[] = [
@@ -236,6 +238,21 @@ let grievancesDb: GrievanceItem[] = [
   }
 ];
 
+// Pre-seed initial grievances with on-chain audit records
+async function seedBlockchainAudits() {
+  for (const g of grievancesDb) {
+    const meta = await blockchainService.registerComplaint({
+      id: g.id,
+      description: g.description,
+      department: g.department,
+      priority: g.priority,
+      location: g.location,
+    });
+    g.blockchainAudit = meta;
+  }
+}
+seedBlockchainAudits().catch((err) => console.warn('Blockchain audit initial seed warning:', err?.message));
+
 // Fallback Rule-Based NLP analyzer if Gemini API key isn't active
 function ruleBasedAnalyze(text: string, location?: string) {
   const lower = text.toLowerCase();
@@ -366,6 +383,53 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// Blockchain Audit Status
+app.get('/api/blockchain/status', (req, res) => {
+  res.json({
+    success: true,
+    status: blockchainService.getNetworkStatus(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Query On-Chain Grievance Audit Record & Event History
+app.get('/api/blockchain/grievance/:id', async (req, res) => {
+  try {
+    const auditRecord = await blockchainService.getAuditRecord(req.params.id);
+    if (!auditRecord) {
+      return res.status(404).json({ success: false, error: 'Blockchain audit record not found for grievance' });
+    }
+    res.json({ success: true, data: auditRecord });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to fetch blockchain audit record' });
+  }
+});
+
+// Verify Off-Chain Grievance Data against On-Chain Cryptographic Digest
+app.post('/api/blockchain/verify/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const grievance = grievancesDb.find((g) => g.id === id);
+    const candidate = grievance || req.body;
+
+    if (!candidate || !candidate.id) {
+      return res.status(400).json({ success: false, error: 'Grievance data required for verification' });
+    }
+
+    const verification = await blockchainService.verifyIntegrity(id, {
+      id: candidate.id,
+      description: req.body.description !== undefined ? req.body.description : candidate.description,
+      department: req.body.department !== undefined ? req.body.department : candidate.department,
+      priority: req.body.priority !== undefined ? req.body.priority : candidate.priority,
+      location: candidate.location,
+    });
+
+    res.json({ success: true, result: verification });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Verification failed' });
+  }
+});
+
 // List all grievances
 app.get('/api/grievances', (req, res) => {
   res.json({
@@ -384,7 +448,7 @@ app.get('/api/grievances/:id', (req, res) => {
 });
 
 // Submit new grievance
-app.post('/api/grievances', (req, res) => {
+app.post('/api/grievances', async (req, res) => {
   const {
     description,
     englishTranslation,
@@ -404,6 +468,15 @@ app.post('/api/grievances', (req, res) => {
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' +
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // Commit on-chain tamper-evident audit record
+  const blockchainAudit = await blockchainService.registerComplaint({
+    id: newId,
+    description: description || 'Civic issue report',
+    department: department || 'Public Works (PWD)',
+    priority: priority || 'General',
+    location: location,
+  });
 
   const newGrievance: GrievanceItem = {
     id: newId,
@@ -433,6 +506,7 @@ app.post('/api/grievances', (req, res) => {
     supportersCount: 1,
     hasSupported: true,
     attachments: attachments || [],
+    blockchainAudit,
     timeline: [
       {
         status: 'Submitted',
@@ -445,6 +519,12 @@ app.post('/api/grievances', (req, res) => {
         timestamp: formattedDate,
         note: `Civic AI isolated jurisdiction: routed exclusively to ${department || 'Public Works'}. Jurisdictional conflict prevention verified. Confidence: ${confidenceScore || 95}%.`,
         actor: 'Civic AI Intelligence Dispatcher'
+      },
+      {
+        status: 'Blockchain Anchored',
+        timestamp: formattedDate,
+        note: `Tamper-evident audit record anchored on-chain. Hash: ${blockchainAudit.complaintHash.slice(0, 16)}...`,
+        actor: 'SmartGov Audit Node'
       }
     ]
   };
@@ -474,7 +554,7 @@ app.post('/api/grievances', (req, res) => {
 });
 
 // Update Grievance Status
-app.patch('/api/grievances/:id/status', (req, res) => {
+app.patch('/api/grievances/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, note, officerName } = req.body;
 
@@ -492,6 +572,17 @@ app.patch('/api/grievances/:id/status', (req, res) => {
     grievancesDb[itemIndex].timeline = [];
   }
 
+  // Record status change on blockchain audit layer
+  const auditMeta = await blockchainService.recordStatusChange(
+    id,
+    status,
+    note || `Status updated to ${status}`,
+    officerName || 'Zonal Officer'
+  );
+  if (auditMeta) {
+    grievancesDb[itemIndex].blockchainAudit = auditMeta;
+  }
+
   grievancesDb[itemIndex].timeline.push({
     status: `Status Changed to ${status}`,
     timestamp: formattedDate,
@@ -506,7 +597,7 @@ app.patch('/api/grievances/:id/status', (req, res) => {
 });
 
 // Transfer Grievance to another department
-app.patch('/api/grievances/:id/transfer', (req, res) => {
+app.patch('/api/grievances/:id/transfer', async (req, res) => {
   const { id } = req.params;
   const { newDepartment, reason, officerName } = req.body;
 
@@ -521,6 +612,17 @@ app.patch('/api/grievances/:id/transfer', (req, res) => {
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' +
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // Record department transfer on blockchain audit layer
+  const auditMeta = await blockchainService.recordDepartmentTransfer(
+    id,
+    newDepartment,
+    reason || 'Department reassigned',
+    officerName || 'Zonal Inspector'
+  );
+  if (auditMeta) {
+    grievancesDb[itemIndex].blockchainAudit = auditMeta;
+  }
 
   if (!grievancesDb[itemIndex].timeline) {
     grievancesDb[itemIndex].timeline = [];
@@ -540,7 +642,7 @@ app.patch('/api/grievances/:id/transfer', (req, res) => {
 });
 
 // Upload Resolution Proof
-app.post('/api/grievances/:id/resolution-proof', (req, res) => {
+app.post('/api/grievances/:id/resolution-proof', async (req, res) => {
   const { id } = req.params;
   const { officerName, notes, photoUrl, materialsUsed } = req.body;
 
@@ -552,6 +654,17 @@ app.post('/api/grievances/:id/resolution-proof', (req, res) => {
   const now = new Date();
   const formattedDate = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' +
     now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  // Commit resolution proof and image content hash to blockchain
+  const auditMeta = await blockchainService.recordResolutionProof(id, {
+    officerName: officerName || 'Senior Engineer',
+    notes: notes || 'Work verified and resolved on ground.',
+    photoUrl,
+    materialsUsed,
+  });
+  if (auditMeta) {
+    grievancesDb[itemIndex].blockchainAudit = auditMeta;
+  }
 
   grievancesDb[itemIndex].resolutionProof = {
     officerName: officerName || 'Senior Engineer',
@@ -665,7 +778,7 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Government Employee Reply to Department Problem
-app.post('/api/grievances/:id/reply', (req, res) => {
+app.post('/api/grievances/:id/reply', async (req, res) => {
   const { id } = req.params;
   const { officerName, officerEmail, securityCode, department, replyText, statusSet } = req.body;
 
@@ -696,6 +809,17 @@ app.post('/api/grievances/:id/reply', (req, res) => {
   else if (statusSet === 'in_progress') newStatus = 'In Progress';
 
   grievancesDb[itemIndex].status = newStatus;
+
+  // Record officer reply action on blockchain audit layer
+  const auditMeta = await blockchainService.recordOfficerReply(
+    id,
+    replyText.trim(),
+    officerName || 'Municipal In-Charge',
+    securityCode
+  );
+  if (auditMeta) {
+    grievancesDb[itemIndex].blockchainAudit = auditMeta;
+  }
 
   if (!grievancesDb[itemIndex].timeline) {
     grievancesDb[itemIndex].timeline = [];

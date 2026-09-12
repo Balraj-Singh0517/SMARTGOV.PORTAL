@@ -34,6 +34,7 @@ import { InteractiveMap } from './InteractiveMap';
 import { StatusModal } from './StatusModal';
 import { TransferModal } from './TransferModal';
 import { ResolutionProofModal } from './ResolutionProofModal';
+import { BlockchainAuditPanel } from './BlockchainAuditPanel';
 
 interface OfficerInboxDetailViewProps {
   grievances: Grievance[];
@@ -468,6 +469,9 @@ export const OfficerInboxDetailView: React.FC<OfficerInboxDetailViewProps> = ({
               </div>
             </div>
           )}
+
+          {/* Blockchain-Based Tamper-Evident Audit Layer */}
+          <BlockchainAuditPanel grievance={selectedItem} />
 
           {/* Grievance Lifecycle History & Audit Trail */}
           <div className="bg-[#FFFFFF] dark:bg-[#0B1528] rounded-2xl p-5 border border-[#C8E2FA] dark:border-[#1E3456] shadow-xs transition-colors">

@@ -77,6 +77,37 @@ export interface Grievance {
   timeline?: GrievanceTimelineItem[];
   officialReplies?: OfficialReply[];
   isUnseen?: boolean;
+  blockchainAudit?: BlockchainAuditMetadata;
+}
+
+export interface BlockchainAuditMetadata {
+  txHash?: string;
+  blockNumber?: number;
+  network?: string;
+  contractAddress?: string;
+  status: 'CONFIRMED' | 'PENDING' | 'FAILED' | 'LOCAL_AUDIT';
+  complaintHash: string;
+  timestamp: number;
+  latestActionHash?: string;
+  resolutionHash?: string;
+  explorerUrl?: string;
+  verified?: boolean;
+}
+
+export interface IntegrityVerificationResult {
+  complaintId: string;
+  verified: boolean;
+  onChainHash: string;
+  calculatedHash: string;
+  statusMismatch: boolean;
+  departmentMismatch: boolean;
+  blockTimestamp?: number;
+  transactionHash?: string;
+  network?: string;
+  contractAddress?: string;
+  explorerUrl?: string;
+  auditTrailLength: number;
+  details: string;
 }
 
 export interface AIAnalysisResult {
