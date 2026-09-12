@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>SmartGov Portal - AI-Powered Civic Grievance Resolution</title>
+    <link rel="icon" type="image/jpeg" href="/smart-gov-logo.jpg" />
+    <meta name="description" content="AI-powered civic grievance resolution platform with real-time WebSocket synchronization, multilingual routing, officer workflows, and performance analytics." />
+    <meta property="og:title" content="SmartGov Portal - AI-Powered Civic Grievance Resolution" />
+    <meta property="og:description" content="AI-powered civic grievance resolution platform with real-time WebSocket synchronization, multilingual routing, officer workflows, and performance analytics." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Gracefully prevent unhandled dev websocket rejection alerts in iframe container environment
+      window.addEventListener('unhandledrejection', function(event) {
+        const msg = (event && event.reason && (event.reason.message || String(event.reason))) || '';
+        if (msg.includes('WebSocket') || msg.includes('websocket')) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener('error', function(event) {
+        const msg = (event && (event.message || '')) || '';
+        if (msg.includes('[vite] failed to connect to websocket') || (msg.includes('WebSocket') && msg.includes('closed'))) {
+          event.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-[#F0F7FF] dark:bg-[#080E1A] text-[#0A192F] dark:text-[#F0F7FF] antialiased selection:bg-[#FEF08A] selection:text-[#0A192F]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

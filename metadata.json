@@ -1,0 +1,11 @@
+{
+  "name": "Remix Remix smartGov",
+  "description": "Imported from GitHub: Balraj-Singh0517/smartGov",
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
