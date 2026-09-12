@@ -1,11 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from "url";
-import { dirname } from "path";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 // Complete ABI for SmartGovAudit contract
 export const SMART_GOV_AUDIT_ABI = [
   "constructor(address initialAdmin, address initialRelayer)",
@@ -57,9 +51,8 @@ export function getContractConfig(): ContractConfig {
   // Try to read deployment file if available
   let deployedAddress = process.env.BLOCKCHAIN_CONTRACT_ADDRESS || '';
   const candidatePaths = [
-    path.join(__dirname, 'contractDeployment.json'),
-    path.join(process.cwd(), 'server/services/blockchain/contractDeployment.json'),
-    path.join(__dirname, 'server/services/blockchain/contractDeployment.json'),
+    path.join(process.cwd(), 'server', 'services', 'blockchain', 'contractDeployment.json'),
+    path.join(process.cwd(), 'dist', 'server', 'services', 'blockchain', 'contractDeployment.json'),
   ];
   for (const p of candidatePaths) {
     if (!deployedAddress && fs.existsSync(p)) {
@@ -78,8 +71,9 @@ export function getContractConfig(): ContractConfig {
   return {
     rpcUrl: process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:8545',
     privateKey:
+      process.env.BLOCKCHAIN_RELAYER_KEY ||
       process.env.BLOCKCHAIN_PRIVATE_KEY ||
-      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', // Default Hardhat dev key
+      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', // Default Hardhat dev relayer key (Account #1 with BACKEND_ROLE)
     contractAddress: deployedAddress,
     network: process.env.BLOCKCHAIN_NETWORK || 'hardhat-local',
     chainId: parseInt(process.env.BLOCKCHAIN_CHAIN_ID || '31337', 10),

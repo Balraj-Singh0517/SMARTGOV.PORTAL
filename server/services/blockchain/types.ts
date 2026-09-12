@@ -23,18 +23,69 @@ export interface OnChainActionEvent {
   actionType: string;
 }
 
+export type QueueStatus = 'QUEUED' | 'PENDING' | 'CONFIRMED' | 'FAILED';
+
+export type OperationType =
+  | 'REGISTER'
+  | 'STATUS_UPDATE'
+  | 'TRANSFER'
+  | 'OFFICER_REPLY'
+  | 'RESOLUTION';
+
+export interface QueuedOperation {
+  operationId: string;
+  grievanceId: string;
+  operationType: OperationType;
+  payload: any;
+  txHash: string | null;
+  nonce: number | null;
+  attemptCount: number;
+  maxAttempts: number;
+  createdAt: number;
+  updatedAt: number;
+  error: string | null;
+  status: QueueStatus;
+  receipt?: {
+    blockNumber?: number;
+    gasUsed?: string;
+    status?: number;
+  } | null;
+}
+
+export interface BlockchainConfirmedEvent {
+  event: 'blockchain:confirmed';
+  grievanceId: string;
+  operationId: string;
+  transactionHash: string;
+  blockNumber: number;
+  operationType: OperationType;
+  timestamp: number;
+}
+
+export interface BlockchainFailedEvent {
+  event: 'blockchain:failed';
+  grievanceId: string;
+  operationId: string;
+  error: string;
+  operationType: OperationType;
+  timestamp: number;
+}
+
 export interface BlockchainAuditMetadata {
+  operationId?: string;
   txHash?: string;
   blockNumber?: number;
+  gasUsed?: string;
   network?: string;
   contractAddress?: string;
-  status: 'CONFIRMED' | 'PENDING' | 'FAILED' | 'LOCAL_AUDIT';
+  status: 'QUEUED' | 'PENDING' | 'CONFIRMED' | 'FAILED' | 'LOCAL_AUDIT';
   complaintHash: string;
   timestamp: number;
   latestActionHash?: string;
   resolutionHash?: string;
   explorerUrl?: string;
   verified?: boolean;
+  error?: string | null;
 }
 
 export interface IntegrityVerificationResult {
@@ -63,4 +114,11 @@ export interface BlockchainNetworkStatus {
   totalComplaintsOnChain: number;
   explorerBaseUrl: string;
   mode: 'live-evm' | 'mock-audit';
+  queue?: {
+    total: number;
+    queued: number;
+    pending: number;
+    confirmed: number;
+    failed: number;
+  };
 }

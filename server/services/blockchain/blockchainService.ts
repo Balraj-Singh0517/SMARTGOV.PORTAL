@@ -14,6 +14,7 @@ import {
   BlockchainNetworkStatus,
 } from './types';
 import { getContractConfig, SMART_GOV_AUDIT_ABI } from './contract';
+import { txQueue, type WsBroadcaster } from './queue/txQueue.ts';
 
 // Mapping helper for Status enum in SmartGovAudit.sol
 export const STATUS_MAP: Record<string, number> = {
@@ -61,7 +62,44 @@ class BlockchainService {
   > = new Map();
 
   constructor() {
+    this.setupQueueListeners();
     this.initialize();
+  }
+
+  private setupQueueListeners(): void {
+    txQueue.addListener((event, op) => {
+      const local = this.localLedger.get(op.grievanceId);
+      if (local) {
+        if (event === 'confirmed') {
+          local.metadata.status = 'CONFIRMED';
+          local.metadata.verified = true;
+          if (op.txHash) local.metadata.txHash = op.txHash;
+          if (op.receipt?.blockNumber) local.metadata.blockNumber = op.receipt.blockNumber;
+          if (op.receipt?.gasUsed) local.metadata.gasUsed = op.receipt.gasUsed;
+        } else if (event === 'failed') {
+          local.metadata.status = 'FAILED';
+          local.metadata.error = op.error || undefined;
+        } else if (event === 'pending') {
+          local.metadata.status = 'PENDING';
+          if (op.txHash) local.metadata.txHash = op.txHash;
+        }
+      }
+    });
+  }
+
+  public setWsBroadcaster(broadcaster: WsBroadcaster | null): void {
+    txQueue.setBroadcaster(broadcaster);
+  }
+
+  public shutdown(): void {
+    txQueue.saveToDisk();
+  }
+
+  public getQueueOperations(grievanceId?: string) {
+    if (grievanceId) {
+      return txQueue.getOperationsByGrievance(grievanceId);
+    }
+    return txQueue.getAllOperations();
   }
 
   public async initialize() {
@@ -112,6 +150,10 @@ class BlockchainService {
         console.log(
           `Connected to Blockchain Node at ${this.config.rpcUrl} (Contract: ${this.config.contractAddress})`
         );
+
+        // Reconcile pending/queued operations upon startup and process remaining queue
+        await txQueue.reconcileOnStartup(this.contract, this.provider);
+        txQueue.processQueue(this.contract, this.signer, this.provider);
       }
     } catch (err: any) {
       console.log(
@@ -131,6 +173,7 @@ class BlockchainService {
       totalComplaintsOnChain: this.localLedger.size,
       explorerBaseUrl: this.config.explorerUrl,
       mode: this.isConnected ? 'live-evm' : 'mock-audit',
+      queue: txQueue.getStats(),
     };
   }
 
@@ -151,22 +194,36 @@ class BlockchainService {
     const priorityNum = PRIORITY_MAP[grievance.priority] || 2;
     const now = Date.now();
 
-    // Idempotency check
-    const idempotencyKey = `REG_${grievance.id}_${complaintHash}`;
-    if (this.processedActions.has(idempotencyKey)) {
-      const existing = this.localLedger.get(grievance.id);
-      if (existing) return existing.metadata;
+    // Enqueue operation into durable transaction queue
+    const queuedOp = txQueue.enqueue(grievance.id, 'REGISTER', {
+      idBytes32,
+      complaintHash,
+      deptHash,
+      priorityNum,
+    });
+
+    // If already in local ledger
+    const existing = this.localLedger.get(grievance.id);
+    if (existing) {
+      if (queuedOp.status === 'CONFIRMED') {
+        existing.metadata.status = 'CONFIRMED';
+        existing.metadata.verified = true;
+        if (queuedOp.txHash) existing.metadata.txHash = queuedOp.txHash;
+      }
+      return existing.metadata;
     }
-    this.processedActions.add(idempotencyKey);
 
     const metadata: BlockchainAuditMetadata = {
       complaintHash,
       timestamp: now,
-      status: 'CONFIRMED',
+      status: queuedOp.status, // Always reflect real queue status: 'QUEUED', 'PENDING', or 'CONFIRMED'
       network: this.config.network,
       contractAddress: this.config.contractAddress || 'SmartGovAudit',
-      explorerUrl: `${this.config.explorerUrl}${complaintHash}`,
-      verified: true,
+      explorerUrl: queuedOp.txHash
+        ? `${this.config.explorerUrl}${queuedOp.txHash}`
+        : `${this.config.explorerUrl}${complaintHash}`,
+      verified: queuedOp.status === 'CONFIRMED',
+      txHash: queuedOp.txHash || undefined,
     };
 
     // Store in local ledger for immediate read consistency
@@ -198,29 +255,9 @@ class BlockchainService {
       metadata,
     });
 
-    // If EVM contract is live, dispatch on-chain transaction asynchronously
-    if (this.isConnected && this.contract) {
-      try {
-        const tx = await this.contract.registerComplaint(
-          idBytes32,
-          complaintHash,
-          deptHash,
-          priorityNum
-        );
-        metadata.txHash = tx.hash;
-        metadata.status = 'PENDING';
-        metadata.explorerUrl = `${this.config.explorerUrl}${tx.hash}`;
-
-        // Wait for confirmation in background without blocking caller
-        tx.wait().then((receipt: any) => {
-          metadata.status = 'CONFIRMED';
-          metadata.blockNumber = receipt.blockNumber;
-          console.log(`[Blockchain] Grievance ${grievance.id} confirmed in block ${receipt.blockNumber}`);
-        });
-      } catch (err: any) {
-        console.warn(`[Blockchain] EVM submission fallback to local ledger for ${grievance.id}:`, err?.message);
-        metadata.status = 'CONFIRMED';
-      }
+    // If EVM contract is live, process queue asynchronously
+    if (this.isConnected && this.contract && this.signer && this.provider) {
+      txQueue.processQueue(this.contract, this.signer, this.provider);
     }
 
     return metadata;
@@ -244,10 +281,6 @@ class BlockchainService {
       details: note || `Status updated to ${newStatus}`,
     });
 
-    const idempotencyKey = `STATUS_${id}_${statusCode}_${actionHash}`;
-    if (this.processedActions.has(idempotencyKey)) return null;
-    this.processedActions.add(idempotencyKey);
-
     const now = Math.floor(Date.now() / 1000);
     const existing = this.localLedger.get(id);
     if (existing) {
@@ -263,17 +296,20 @@ class BlockchainService {
         actionType: 'STATUS_UPDATE',
       });
       existing.metadata.latestActionHash = actionHash;
+      if (existing.metadata.status !== 'CONFIRMED') {
+        existing.metadata.status = 'QUEUED';
+      }
     }
 
-    if (this.isConnected && this.contract) {
-      try {
-        const tx = await this.contract.updateStatus(idBytes32, statusCode, actionHash);
-        tx.wait().then((receipt: any) => {
-          console.log(`[Blockchain] Status of ${id} updated on-chain in block ${receipt.blockNumber}`);
-        });
-      } catch (err: any) {
-        console.warn(`[Blockchain] Failed to commit status update for ${id}:`, err?.message);
-      }
+    // Enqueue operation into durable queue
+    txQueue.enqueue(id, 'STATUS_UPDATE', {
+      idBytes32,
+      newStatus: statusCode,
+      actionHash,
+    });
+
+    if (this.isConnected && this.contract && this.signer && this.provider) {
+      txQueue.processQueue(this.contract, this.signer, this.provider);
     }
 
     return existing ? existing.metadata : null;
@@ -297,10 +333,6 @@ class BlockchainService {
       details: `Transferred to ${newDepartment}: ${reason}`,
     });
 
-    const idempotencyKey = `TRANSFER_${id}_${newDeptHash}_${actionHash}`;
-    if (this.processedActions.has(idempotencyKey)) return null;
-    this.processedActions.add(idempotencyKey);
-
     const now = Math.floor(Date.now() / 1000);
     const existing = this.localLedger.get(id);
     if (existing) {
@@ -317,17 +349,20 @@ class BlockchainService {
         actionType: 'TRANSFER',
       });
       existing.metadata.latestActionHash = actionHash;
+      if (existing.metadata.status !== 'CONFIRMED') {
+        existing.metadata.status = 'QUEUED';
+      }
     }
 
-    if (this.isConnected && this.contract) {
-      try {
-        const tx = await this.contract.transferDepartment(idBytes32, newDeptHash, actionHash);
-        tx.wait().then((receipt: any) => {
-          console.log(`[Blockchain] Transfer of ${id} confirmed on-chain in block ${receipt.blockNumber}`);
-        });
-      } catch (err: any) {
-        console.warn(`[Blockchain] Failed to commit transfer for ${id}:`, err?.message);
-      }
+    // Enqueue operation into durable queue
+    txQueue.enqueue(id, 'TRANSFER', {
+      idBytes32,
+      newDeptHash,
+      actionHash,
+    });
+
+    if (this.isConnected && this.contract && this.signer && this.provider) {
+      txQueue.processQueue(this.contract, this.signer, this.provider);
     }
 
     return existing ? existing.metadata : null;
@@ -350,10 +385,6 @@ class BlockchainService {
       details: replyText,
     });
 
-    const idempotencyKey = `REPLY_${id}_${actionHash}`;
-    if (this.processedActions.has(idempotencyKey)) return null;
-    this.processedActions.add(idempotencyKey);
-
     const now = Math.floor(Date.now() / 1000);
     const existing = this.localLedger.get(id);
     if (existing) {
@@ -368,21 +399,20 @@ class BlockchainService {
         actionType: 'OFFICIAL_REPLY',
       });
       existing.metadata.latestActionHash = actionHash;
+      if (existing.metadata.status !== 'CONFIRMED') {
+        existing.metadata.status = 'QUEUED';
+      }
     }
 
-    if (this.isConnected && this.contract) {
-      try {
-        const tx = await this.contract.recordOfficerAction(
-          idBytes32,
-          actionHash,
-          'OFFICIAL_REPLY'
-        );
-        tx.wait().then((receipt: any) => {
-          console.log(`[Blockchain] Officer reply for ${id} recorded on-chain in block ${receipt.blockNumber}`);
-        });
-      } catch (err: any) {
-        console.warn(`[Blockchain] Failed to record officer reply on-chain for ${id}:`, err?.message);
-      }
+    // Enqueue operation into durable queue
+    txQueue.enqueue(id, 'OFFICER_REPLY', {
+      idBytes32,
+      actionHash,
+      actionType: 'OFFICIAL_REPLY',
+    });
+
+    if (this.isConnected && this.contract && this.signer && this.provider) {
+      txQueue.processQueue(this.contract, this.signer, this.provider);
     }
 
     return existing ? existing.metadata : null;
@@ -409,10 +439,6 @@ class BlockchainService {
       details: `Resolution certified with proof: ${proof.notes}`,
     });
 
-    const idempotencyKey = `RES_${id}_${resolutionHash}`;
-    if (this.processedActions.has(idempotencyKey)) return null;
-    this.processedActions.add(idempotencyKey);
-
     const now = Math.floor(Date.now() / 1000);
     const existing = this.localLedger.get(id);
     if (existing) {
@@ -430,21 +456,20 @@ class BlockchainService {
       });
       existing.metadata.resolutionHash = resolutionHash;
       existing.metadata.latestActionHash = actionHash;
+      if (existing.metadata.status !== 'CONFIRMED') {
+        existing.metadata.status = 'QUEUED';
+      }
     }
 
-    if (this.isConnected && this.contract) {
-      try {
-        const tx = await this.contract.recordResolution(
-          idBytes32,
-          resolutionHash,
-          actionHash
-        );
-        tx.wait().then((receipt: any) => {
-          console.log(`[Blockchain] Resolution proof for ${id} certified on-chain in block ${receipt.blockNumber}`);
-        });
-      } catch (err: any) {
-        console.warn(`[Blockchain] Failed to record resolution on-chain for ${id}:`, err?.message);
-      }
+    // Enqueue operation into durable queue
+    txQueue.enqueue(id, 'RESOLUTION', {
+      idBytes32,
+      resolutionHash,
+      actionHash,
+    });
+
+    if (this.isConnected && this.contract && this.signer && this.provider) {
+      txQueue.processQueue(this.contract, this.signer, this.provider);
     }
 
     return existing ? existing.metadata : null;
@@ -533,34 +558,38 @@ class BlockchainService {
    */
   public async getAuditRecord(id: string) {
     const idBytes32 = complaintIdToBytes32(id);
+    const queueOperations = txQueue.getOperationsByGrievance(id);
 
     if (this.isConnected && this.contract) {
       try {
         const record = await this.contract.getComplaint(idBytes32);
-        const history = await this.contract.getAuditHistory(idBytes32);
-        return {
-          onChain: true,
-          record: {
-            complaintId: id,
-            complaintHash: record.complaintHash,
-            departmentHash: record.departmentHash,
-            priority: Number(record.priority),
-            status: Number(record.status),
-            latestActionHash: record.latestActionHash,
-            resolutionHash: record.resolutionHash,
-            registeredAt: Number(record.registeredAt),
-            updatedAt: Number(record.updatedAt),
-            actionCount: Number(record.actionCount),
-            exists: record.exists,
-          },
-          history: history.map((item: any) => ({
-            actionHash: item.actionHash,
-            status: Number(item.status),
-            departmentHash: item.departmentHash,
-            timestamp: Number(item.timestamp),
-            actionType: item.actionType,
-          })),
-        };
+        if (record && record.exists) {
+          const history = await this.contract.getAuditHistory(idBytes32);
+          return {
+            onChain: true,
+            record: {
+              complaintId: id,
+              complaintHash: record.complaintHash,
+              departmentHash: record.departmentHash,
+              priority: Number(record.priority),
+              status: Number(record.status),
+              latestActionHash: record.latestActionHash,
+              resolutionHash: record.resolutionHash,
+              registeredAt: Number(record.registeredAt),
+              updatedAt: Number(record.updatedAt),
+              actionCount: Number(record.actionCount),
+              exists: record.exists,
+            },
+            history: history.map((item: any) => ({
+              actionHash: item.actionHash,
+              status: Number(item.status),
+              departmentHash: item.departmentHash,
+              timestamp: Number(item.timestamp),
+              actionType: item.actionType,
+            })),
+            queueOperations,
+          };
+        }
       } catch {
         // Fall through to local ledger
       }
@@ -573,6 +602,7 @@ class BlockchainService {
         record: local.record,
         history: local.history,
         metadata: local.metadata,
+        queueOperations,
       };
     }
 

@@ -40,6 +40,9 @@ export function broadcastPresence() {
   });
 }
 
+// Wire blockchain transaction queue to WebSocket broadcaster
+blockchainService.setWsBroadcaster(broadcastWs);
+
 app.use(express.json({ limit: '10mb' }));
 
 // Lazy Google GenAI Client
@@ -388,6 +391,16 @@ app.get('/api/blockchain/status', (req, res) => {
   res.json({
     success: true,
     status: blockchainService.getNetworkStatus(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Blockchain Transaction Queue Inspection
+app.get('/api/blockchain/queue', (req, res) => {
+  res.json({
+    success: true,
+    stats: blockchainService.getNetworkStatus().queue,
+    operations: blockchainService.getQueueOperations(),
     timestamp: new Date().toISOString()
   });
 });
@@ -1260,5 +1273,15 @@ async function startServer() {
     console.log(`SmartGov Portal server running on http://0.0.0.0:${PORT} (HTTP & WebSocket /ws)`);
   });
 }
+
+process.on('SIGINT', () => {
+  blockchainService.shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  blockchainService.shutdown();
+  process.exit(0);
+});
 
 startServer();

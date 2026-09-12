@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { keccak256 as ethersKeccak256, toUtf8Bytes } from 'ethers';
 
 /**
  * Deterministic JSON stringifier that sorts all object keys lexicographically.
@@ -22,17 +23,17 @@ export function canonicalizeJson(obj: any): string {
 }
 
 /**
- * Keccak-256 implementation matching EVM Solidity keccak256().
- * Uses keccak library if available or ethers.keccak256, with fallback to standard EVM Keccak.
+ * Custom Keccak-256 override hook (if injected by test harness).
  */
 let keccakFn: ((bytes: Uint8Array | string) => string) | null = null;
 
-export function setKeccakImplementation(fn: (bytes: Uint8Array | string) => string) {
+export function setKeccakImplementation(fn: ((bytes: Uint8Array | string) => string) | null) {
   keccakFn = fn;
 }
 
 /**
  * Computes standard SHA-256 hash (hex string with 0x prefix).
+ * Used exclusively for non-blockchain media content digests (e.g. photo file SHA-256).
  */
 export function sha256Hash(data: string | Buffer): string {
   const hash = crypto.createHash('sha256').update(data).digest('hex');
@@ -40,25 +41,18 @@ export function sha256Hash(data: string | Buffer): string {
 }
 
 /**
- * Computes EVM Keccak-256 hash.
- * If ethers is initialized, uses ethers.keccak256.
- * Falls back to SHA-256 formatted to bytes32 if keccak is not yet bound.
+ * Computes EVM-compatible Keccak-256 hash.
+ * Guaranteed to match Solidity keccak256() under all execution paths.
+ * Never falls back to SHA-256.
  */
 export function keccak256(data: string | Uint8Array): string {
   if (keccakFn) {
     return keccakFn(data);
   }
-  try {
-    const { ethers } = require('ethers');
-    if (typeof data === 'string') {
-      return ethers.keccak256(ethers.toUtf8Bytes(data));
-    }
-    return ethers.keccak256(data);
-  } catch {
-    // Pure node fallback
-    const hash = crypto.createHash('sha256').update(data).digest('hex');
-    return `0x${hash}`;
+  if (typeof data === 'string') {
+    return ethersKeccak256(toUtf8Bytes(data));
   }
+  return ethersKeccak256(data);
 }
 
 /**
