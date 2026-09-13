@@ -59,6 +59,10 @@ export function departmentToBytes32(department: string): string {
   return keccak256(department.trim().toLowerCase());
 }
 
+export const COMPLAINT_DOMAIN_PREFIX = 'SMARTGOV:COMPLAINT:v1:';
+export const RESOLUTION_DOMAIN_PREFIX = 'SMARTGOV:RESOLUTION:v1:';
+export const ACTION_DOMAIN_PREFIX = 'SMARTGOV:ACTION:v1:';
+
 export interface ClientGrievancePayload {
   id: string;
   description: string;
@@ -69,7 +73,7 @@ export interface ClientGrievancePayload {
 }
 
 /**
- * Generates the deterministic complaint hash directly in the browser.
+ * Generates the deterministic complaint hash directly in the browser with domain separation.
  * Includes only core civic grievance fields:
  * id, description (trimmed, CRLF normalized to LF), department, priority, and rounded coordinates (5 decimals).
  * Excludes citizen PII (name, phone, email) to preserve privacy.
@@ -89,11 +93,11 @@ export function computeComplaintHash(grievance: ClientGrievancePayload): string 
   };
 
   const serialized = canonicalizeJson(canonicalData);
-  return keccak256(serialized);
+  return keccak256(`${COMPLAINT_DOMAIN_PREFIX}${serialized}`);
 }
 
 /**
- * Generates the deterministic resolution proof hash directly in the browser.
+ * Generates the deterministic resolution proof hash directly in the browser with domain separation.
  * Hashes resolution notes, inspector identity, materials, and the content hash of the ground photo.
  */
 export function computeResolutionHash(proof: {
@@ -120,11 +124,11 @@ export function computeResolutionHash(proof: {
   };
 
   const serialized = canonicalizeJson(canonicalData);
-  return keccak256(serialized);
+  return keccak256(`${RESOLUTION_DOMAIN_PREFIX}${serialized}`);
 }
 
 /**
- * Generates an action hash for status transitions, department transfers, and official replies.
+ * Generates an action hash with domain separation for status transitions, department transfers, and official replies.
  */
 export function computeActionHash(action: {
   actionType: string;
@@ -140,5 +144,5 @@ export function computeActionHash(action: {
   };
 
   const serialized = canonicalizeJson(canonicalData);
-  return keccak256(serialized);
+  return keccak256(`${ACTION_DOMAIN_PREFIX}${serialized}`);
 }
