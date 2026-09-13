@@ -1,6 +1,6 @@
 {
   "name": "Remix Remix smartGov",
-  "description": "Imported from GitHub: Balraj-Singh0517/smartGov",
+  "description": "AI-powered civic grievance resolution platform with real-time WebSocket synchronization, multilingual routing, officer workflows, and performance analytics.",
   "requestFramePermissions": [
     "geolocation",
     "microphone"
