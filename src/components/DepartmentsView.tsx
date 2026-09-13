@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { DEPARTMENT_SUMMARIES } from '../data/mockData';
 import { Grievance, AuthUser, OfficialReply } from '../types';
+import { BlockchainAuditPanel } from './BlockchainAuditPanel';
 
 interface DepartmentsViewProps {
   grievances?: Grievance[];
@@ -65,6 +66,7 @@ export const DepartmentsView: React.FC<DepartmentsViewProps> = ({
   const [statusChoice, setStatusChoice] = useState<'unseen' | 'in_progress' | 'solved'>('in_progress');
   const [isSubmittingReply, setIsSubmittingReply] = useState<boolean>(false);
   const [activeMapPreviewId, setActiveMapPreviewId] = useState<string | null>(null);
+  const [activeAuditModalGrievance, setActiveAuditModalGrievance] = useState<Grievance | null>(null);
 
   const isGovernmentEmployee = currentRole === 'officer';
 
@@ -655,14 +657,27 @@ export const DepartmentsView: React.FC<DepartmentsViewProps> = ({
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleOpenCase(item.id)}
-                          className="text-xs font-bold text-[#0284C7] dark:text-[#38BDF8] hover:underline flex items-center gap-1 cursor-pointer"
-                        >
-                          <span>Full Grievance Audit History</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            id={`verify-btn-${item.id}`}
+                            onClick={() => setActiveAuditModalGrievance(item)}
+                            className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                            title="Directly verify cryptographic blockchain integrity"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Verify Integrity</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCase(item.id)}
+                            className="text-xs font-bold text-[#0284C7] dark:text-[#38BDF8] hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>Full Grievance Audit History</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       /* Active Reply Console */
@@ -799,6 +814,28 @@ export const DepartmentsView: React.FC<DepartmentsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Citizen Blockchain Audit Modal */}
+      {activeAuditModalGrievance && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white dark:bg-[#0B1528] rounded-2xl max-w-3xl w-full p-6 border border-[#C8E2FA] dark:border-[#1E3456] shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#C8E2FA] dark:border-[#1E3456] pb-3">
+              <h3 className="text-base font-bold text-[#0A192F] dark:text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#0284C7] dark:text-[#38BDF8]" />
+                <span>Citizen Independent Blockchain Verification (Ticket #{activeAuditModalGrievance.id})</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setActiveAuditModalGrievance(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <BlockchainAuditPanel grievance={activeAuditModalGrievance} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

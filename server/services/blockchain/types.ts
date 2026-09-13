@@ -110,6 +110,7 @@ export interface BlockchainNetworkStatus {
   network: string;
   chainId: number;
   contractAddress: string;
+  rpcUrl?: string;
   currentBlock: number;
   totalComplaintsOnChain: number;
   explorerBaseUrl: string;

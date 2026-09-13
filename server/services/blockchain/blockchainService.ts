@@ -169,6 +169,7 @@ class BlockchainService {
       network: this.config.network,
       chainId: this.config.chainId,
       contractAddress: this.config.contractAddress || '0xLocalAuditLedger',
+      rpcUrl: this.config.rpcUrl,
       currentBlock: 0,
       totalComplaintsOnChain: this.localLedger.size,
       explorerBaseUrl: this.config.explorerUrl,
