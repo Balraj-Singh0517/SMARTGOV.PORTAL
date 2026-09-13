@@ -238,7 +238,7 @@ export class TransactionQueue {
     try {
       while (true) {
         const queuedOps = Array.from(this.operations.values()).filter(
-          (op) => op.status === 'QUEUED'
+          (op) => op.status === 'QUEUED' && !this.retryTimers.has(op.operationId)
         );
         if (queuedOps.length === 0) break;
 
@@ -406,6 +406,7 @@ export class TransactionQueue {
           this.maxBackoffMs
         );
         const timer = setTimeout(() => {
+          this.retryTimers.delete(op.operationId);
           this.processQueue(contract, signer, provider);
         }, backoff);
         this.retryTimers.set(op.operationId, timer);
